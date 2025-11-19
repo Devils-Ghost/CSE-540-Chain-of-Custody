@@ -8,7 +8,7 @@ class ChainOfCustodyClient:
     def __init__(self, fabric_path: str = None):
         if fabric_path is None:
             home = os.path.expanduser("~")
-            fabric_path = f"{home}/fabric-samples/test-network"
+            fabric_path = f"{home}/blockchain-projects/fabric-samples/test-network"
         
         self.fabric_path = fabric_path
         self.channel = "mychannel"
