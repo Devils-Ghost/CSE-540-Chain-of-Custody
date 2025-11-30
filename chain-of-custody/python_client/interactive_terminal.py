@@ -7,6 +7,9 @@ import re
 from typing import List, Dict, Optional
 import time
 import uuid
+import datetime
+import base64
+import binascii
 
 ORG_DISPLAY_NAMES = {
     "org1": "Police Department",
@@ -125,6 +128,103 @@ class ChainOfCustodyClient:
         result = self._run_peer_command(cmd_args, parse_json=True)
         return result.get("data") if result["success"] else None
 
+    def get_genesis_block(self) -> Dict:
+        block_file = os.path.abspath("genesis.block")
+        json_file = os.path.abspath("genesis.json")
+        
+        if os.path.exists(block_file):
+            os.remove(block_file)
+        if os.path.exists(json_file):
+            os.remove(json_file)
+
+        # 1. Fetch Block 0
+        cmd_fetch = [
+            "peer", "channel", "fetch", "0", block_file,
+            "-o", "localhost:7050",
+            "--ordererTLSHostnameOverride", "orderer.example.com",
+            "--tls", "--cafile", self.orderer_ca,
+            "-c", self.channel
+        ]
+        
+        # We suppress output for fetch as it prints to stderr
+        self._run_peer_command(cmd_fetch)
+        
+        if not os.path.exists(block_file):
+            return {"timestamp": "Fetch Failed", "hash": "N/A"}
+
+        # 2. Decode with configtxlator
+        configtxlator_path = os.path.normpath(os.path.join(self.fabric_path, "../bin/configtxlator"))
+        
+        if not os.path.exists(configtxlator_path):
+             print(f"ERROR: configtxlator not found at {configtxlator_path}")
+             return {"timestamp": "Tool Missing", "hash": "N/A"}
+
+        cmd_decode = [
+            configtxlator_path, "proto_decode",
+            "--input", block_file,
+            "--type", "common.Block",
+            "--output", json_file
+        ]
+        
+        result = self._run_peer_command(cmd_decode)
+        
+        if os.path.exists(block_file):
+            os.remove(block_file)
+
+        if not result["success"]:
+            print(f"ERROR: configtxlator failed: {result.get('error')}")
+            if os.path.exists(json_file): os.remove(json_file)
+            return {"timestamp": "Decode Failed", "hash": "N/A"}
+            
+        if not os.path.exists(json_file):
+            print("ERROR: configtxlator did not produce output file")
+            return {"timestamp": "No Output", "hash": "N/A"}
+
+        try:
+            with open(json_file, 'r') as f:
+                block_data = json.load(f)
+            
+            if os.path.exists(json_file):
+                os.remove(json_file)
+            
+            # Extract Timestamp
+            # Block -> data -> data[0] -> payload -> header -> channel_header -> timestamp
+            try:
+                env = block_data['data']['data'][0]
+                ts_raw = env['payload']['header']['channel_header']['timestamp']
+                
+                if isinstance(ts_raw, dict): # Protobuf timestamp dict
+                    seconds = int(ts_raw.get('seconds', 0))
+                    dt = datetime.datetime.fromtimestamp(seconds)
+                    timestamp = dt.strftime('%Y-%m-%d %H:%M:%S')
+                else: # ISO String
+                    timestamp = str(ts_raw).replace('T', ' ').split('.')[0]
+            except (KeyError, IndexError, ValueError):
+                timestamp = "Unknown Format"
+
+            # Extract Data Hash
+            header = block_data.get('header', {})
+            data_hash_b64 = header.get('data_hash', '')
+            
+            # Convert Base64 to Hex
+            try:
+                data_hash_hex = binascii.hexlify(base64.b64decode(data_hash_b64)).decode('utf-8')
+            except:
+                data_hash_hex = data_hash_b64
+
+            return {
+                "timestamp": timestamp,
+                "hash": data_hash_hex
+            }
+
+        except json.JSONDecodeError:
+            if os.path.exists(json_file): os.remove(json_file)
+            return {"timestamp": "Parse Error", "hash": "N/A"}
+        except Exception as e:
+            print(f"Error parsing genesis block: {e}")
+            if os.path.exists(json_file): os.remove(json_file)
+            return {"timestamp": "Error", "hash": "N/A"}
+
     def create_evidence(self):
         print(f"\n--- Create New Evidence ({self.friendly_name}) ---")
         #ev_id = input("Evidence ID (e.g. EV001): ").strip()
@@ -184,6 +284,108 @@ class ChainOfCustodyClient:
         if input(f"Delete {ev_id}? (y/n): ").lower() == 'y':
             result = self.invoke_transaction("DeleteEvidence", [ev_id])
             print("Deleted." if result["success"] else f"Failed: {result['error']}")
+
+    def view_blockchain_ledger(self):
+        print(f"\n--- Entire Blockchain Ledger ({self.friendly_name}) ---")
+        print("Fetching all transactions... this might take a moment...")
+        
+        # 1. Get all evidence IDs
+        all_evidence = self.query_chaincode("GetAllEvidence", [])
+        if not all_evidence:
+            print("No evidence found on the ledger.")
+            return
+
+        all_txs = []
+        
+        # 2. For each evidence, get its history
+        for item in all_evidence:
+            if isinstance(item, str):
+                try:
+                    item = json.loads(item)
+                except json.JSONDecodeError:
+                    continue
+            
+            if not isinstance(item, dict):
+                continue
+                
+            ev_id = item.get('id')
+            if not ev_id: continue
+            
+            history = self.query_chaincode("GetEvidenceHistory", [ev_id])
+            if history:
+                for record in history:
+                    record['asset_id'] = ev_id
+                    all_txs.append(record)
+        
+        # 3. Sort by timestamp
+        def get_sort_key(tx):
+            ts = tx.get('timestamp')
+            if isinstance(ts, dict):
+                return ts.get('seconds', 0) + ts.get('nanos', 0) / 1e9
+            return ts or ""
+
+        all_txs.sort(key=get_sort_key)
+
+        if not all_txs:
+            print("No transactions found.")
+            return
+
+        print(f"\nFound {len(all_txs)} transactions across {len(all_evidence)} assets.\n")
+        
+        # Fetch real genesis block info
+        genesis_info = self.get_genesis_block()
+        genesis_hash = genesis_info.get('hash', 'N/A')
+        
+        # If genesis hash failed, use a placeholder so the chain doesn't look broken
+        if genesis_hash == 'N/A':
+            genesis_hash = "00000000000000000000000000000000000000000000000000000000"
+
+        print(" +----------------------------------------------------------------------+")
+        print(" | GENESIS BLOCK                                                        |")
+        print(f" | Timestamp : {genesis_info.get('timestamp', 'N/A').ljust(49)}|")
+        print(f" | Data Hash : {genesis_hash[:49].ljust(49)}|")
+        print(" | Prev Hash : 00000000000000000000000000000000000000000000000000000000 |")
+        print(" +----------------------------------------------------------------------+")
+        
+        prev_hash = genesis_hash
+
+        for tx in all_txs:
+            tx_id = tx.get('txId', 'N/A')
+            ts_raw = tx.get('timestamp', 'N/A')
+            
+            # Format timestamp
+            if isinstance(ts_raw, dict):
+                seconds = ts_raw.get('seconds', 0)
+                dt = datetime.datetime.fromtimestamp(seconds)
+                ts = dt.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                ts = str(ts_raw)
+
+            asset_id = tx.get('asset_id', 'N/A')
+            is_delete = tx.get('isDelete', False)
+            evidence_data = tx.get('evidence', {})
+            
+            print("     |")
+            print(f"     v   (Linked to: {prev_hash[:10]}...)")
+            print(" +----------------------------------------------------------------------+")
+            print(f" | TX ID     : {tx_id}")
+            print(f" | Prev Hash : {prev_hash}")
+            print(f" | Timestamp : {ts}")
+            print(f" | Asset ID  : {asset_id}")
+            
+            if is_delete:
+                 print(f" | Status    : DELETED")
+            else:
+                owner = evidence_data.get('owner', 'N/A')
+                desc = evidence_data.get('description', 'N/A')
+                # Truncate description if too long
+                if desc and len(desc) > 40: desc = desc[:37] + "..."
+                print(f" | Owner     : {owner}")
+                print(f" | Desc      : {desc}")
+            print(" +----------------------------------------------------------------------+")
+            
+            # Update prev_hash for the next link
+            prev_hash = tx_id
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -265,6 +467,7 @@ def main():
         print("  5. History")
         print("  6. Get All")
         print("  7. Delete")
+        print("  8. View Blockchain Ledger")
         print("  0. Exit")
         print()
         
@@ -277,6 +480,7 @@ def main():
         elif choice == "5": client.get_history()
         elif choice == "6": client.get_all()
         elif choice == "7": client.delete_evidence()
+        elif choice == "8": client.view_blockchain_ledger()
         elif choice == "0": sys.exit(0)
         else: print("Invalid choice.")
         
