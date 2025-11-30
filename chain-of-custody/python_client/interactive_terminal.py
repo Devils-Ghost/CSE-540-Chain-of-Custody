@@ -5,8 +5,8 @@ import os
 import sys
 import re
 from typing import List, Dict, Optional
-from typing import List, Dict, Optional
 import time
+import uuid
 import datetime
 import base64
 import binascii
@@ -227,7 +227,8 @@ class ChainOfCustodyClient:
 
     def create_evidence(self):
         print(f"\n--- Create New Evidence ({self.friendly_name}) ---")
-        ev_id = input("Evidence ID (e.g. EV001): ").strip()
+        #ev_id = input("Evidence ID (e.g. EV001): ").strip()
+        ev_id = str(uuid.uuid4())
         desc = input("Description: ").strip()
         owner = input("Initial Owner Name: ").strip()
         loc = input("Location: ").strip()
@@ -298,7 +299,18 @@ class ChainOfCustodyClient:
         
         # 2. For each evidence, get its history
         for item in all_evidence:
+            if isinstance(item, str):
+                try:
+                    item = json.loads(item)
+                except json.JSONDecodeError:
+                    continue
+            
+            if not isinstance(item, dict):
+                continue
+                
             ev_id = item.get('id')
+            if not ev_id: continue
+            
             history = self.query_chaincode("GetEvidenceHistory", [ev_id])
             if history:
                 for record in history:
