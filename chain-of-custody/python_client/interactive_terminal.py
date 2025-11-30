@@ -162,9 +162,13 @@ class ChainOfCustodyClient:
     def get_history(self):
         ev_id = input("\nEnter ID for History: ").strip()
         data = self.query_chaincode("GetEvidenceHistory", [ev_id])
+        
         if isinstance(data, list):
             for item in data:
-                print(f"- {item.get('timestamp')} | Owner: {item.get('evidence', {}).get('owner')}")
+                print(json.dumps(item, indent=4))
+                print(" "*20 +"A")
+                print(" "*20+"|")
+                print(" "*20+"|")
         else: print(data)
 
     def get_all(self):
