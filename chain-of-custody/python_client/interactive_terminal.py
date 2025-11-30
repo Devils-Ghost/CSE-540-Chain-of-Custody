@@ -129,9 +129,13 @@ class ChainOfCustodyClient:
         return result.get("data") if result["success"] else None
 
     def get_genesis_block(self) -> Dict:
-        block_file = "genesis.block"
+        block_file = os.path.abspath("genesis.block")
+        json_file = os.path.abspath("genesis.json")
+        
         if os.path.exists(block_file):
             os.remove(block_file)
+        if os.path.exists(json_file):
+            os.remove(json_file)
 
         # 1. Fetch Block 0
         cmd_fetch = [
@@ -151,24 +155,37 @@ class ChainOfCustodyClient:
         # 2. Decode with configtxlator
         configtxlator_path = os.path.normpath(os.path.join(self.fabric_path, "../bin/configtxlator"))
         
+        if not os.path.exists(configtxlator_path):
+             print(f"ERROR: configtxlator not found at {configtxlator_path}")
+             return {"timestamp": "Tool Missing", "hash": "N/A"}
+
         cmd_decode = [
             configtxlator_path, "proto_decode",
             "--input", block_file,
-            "--type", "common.Block"
+            "--type", "common.Block",
+            "--output", json_file
         ]
         
         result = self._run_peer_command(cmd_decode)
+        
         if os.path.exists(block_file):
             os.remove(block_file)
 
         if not result["success"]:
-            # Debug info
-            print(f"DEBUG: configtxlator failed. Path: {configtxlator_path}")
-            print(f"DEBUG: Error: {result.get('error')}")
+            print(f"ERROR: configtxlator failed: {result.get('error')}")
+            if os.path.exists(json_file): os.remove(json_file)
             return {"timestamp": "Decode Failed", "hash": "N/A"}
+            
+        if not os.path.exists(json_file):
+            print("ERROR: configtxlator did not produce output file")
+            return {"timestamp": "No Output", "hash": "N/A"}
 
         try:
-            block_data = json.loads(result["output"])
+            with open(json_file, 'r') as f:
+                block_data = json.load(f)
+            
+            if os.path.exists(json_file):
+                os.remove(json_file)
             
             # Extract Timestamp
             # Block -> data -> data[0] -> payload -> header -> channel_header -> timestamp
@@ -201,7 +218,12 @@ class ChainOfCustodyClient:
             }
 
         except json.JSONDecodeError:
+            if os.path.exists(json_file): os.remove(json_file)
             return {"timestamp": "Parse Error", "hash": "N/A"}
+        except Exception as e:
+            print(f"Error parsing genesis block: {e}")
+            if os.path.exists(json_file): os.remove(json_file)
+            return {"timestamp": "Error", "hash": "N/A"}
 
     def create_evidence(self):
         print(f"\n--- Create New Evidence ({self.friendly_name}) ---")
