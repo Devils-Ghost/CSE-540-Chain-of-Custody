@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
@@ -36,6 +37,7 @@ type CustodyTransfer struct {
 	TransferredBy string `json:"transferred_by"`
 }
 
+
 // InitLedger initializes the ledger with sample data
 func (c *ChainOfCustodyContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
 	evidences := []Evidence{
@@ -66,34 +68,47 @@ func (c *ChainOfCustodyContract) InitLedger(ctx contractapi.TransactionContextIn
 	return nil
 }
 
+func (c *ChainOfCustodyContract) validateNewEvidenceID(ctx contractapi.TransactionContextInterface, id string) error {
+    if strings.TrimSpace(id) == "" {
+        return fmt.Errorf("evidence id must not be empty")
+    }
+
+    exists, err := c.EvidenceExists(ctx, id)
+    if err != nil {
+        return err
+    }
+    if exists {
+        return fmt.Errorf("evidence %s already exists", id)
+    }
+
+    return nil
+}
+
 // CreateEvidence creates a new evidence item
 // id is unique, owner is required.
 func (c *ChainOfCustodyContract) CreateEvidence(ctx contractapi.TransactionContextInterface, id string, description string, owner string, location string, tags []string) error {
-	exists, err := c.EvidenceExists(ctx, id)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return fmt.Errorf("evidence %s already exists", id)
-	}
+    // Validate id before proceeding
+    if err := c.validateNewEvidenceID(ctx, id); err != nil {
+        return err
+    }
 
-	evidence := Evidence{
-		ID:          id,
-		Description: description,
-		Owner:       owner,
-		Location:    location,
-		Status:      "Collected",
-		CreatedAt:   time.Now().Format(time.RFC3339),
-		UpdatedAt:   time.Now().Format(time.RFC3339),
-		Tags:        tags,
-	}
+    evidence := Evidence{
+        ID:          id,
+        Description: description,
+        Owner:       owner,
+        Location:    location,
+        Status:      "Collected",
+        CreatedAt:   time.Now().Format(time.RFC3339),
+        UpdatedAt:   time.Now().Format(time.RFC3339),
+        Tags:        tags,
+    }
 
-	evidenceJSON, err := json.Marshal(evidence)
-	if err != nil {
-		return err
-	}
+    evidenceJSON, err := json.Marshal(evidence)
+    if err != nil {
+        return err
+    }
 
-	return ctx.GetStub().PutState(id, evidenceJSON)
+    return ctx.GetStub().PutState(id, evidenceJSON)
 }
 
 // ReadEvidence retrieves an evidence item by id.
