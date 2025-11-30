@@ -6,6 +6,7 @@ import sys
 import re
 from typing import List, Dict, Optional
 import time
+import uuid
 
 ORG_DISPLAY_NAMES = {
     "org1": "Police Department",
@@ -132,7 +133,8 @@ class ChainOfCustodyClient:
 
     def create_evidence(self):
         print(f"\n--- Create New Evidence ({self.friendly_name}) ---")
-        ev_id = input("Evidence ID (e.g. EV001): ").strip()
+        #ev_id = input("Evidence ID (e.g. EV001): ").strip()
+        ev_id = str(uuid.uuid4())
         desc = input("Description: ").strip()
         owner = input("Initial Owner Name: ").strip()
         loc = input("Location: ").strip()
