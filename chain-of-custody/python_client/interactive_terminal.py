@@ -265,13 +265,88 @@ class ChainOfCustodyClient:
         ev_id = input("\nEnter ID for History: ").strip()
         data = self.query_chaincode("GetEvidenceHistory", [ev_id])
         
-        if isinstance(data, list):
-            for item in data:
-                print(json.dumps(item, indent=4))
-                print(" "*20 +"A")
-                print(" "*20+"|")
-                print(" "*20+"|")
-        else: print(data)
+        if not isinstance(data, list) or len(data) == 0:
+            print("No history found or error.")
+            return
+        
+        print(f"\n{'='*70}")
+        print(f"  EVIDENCE HISTORY: {ev_id}")
+        print(f"{'='*70}")
+        
+        # History is in reverse chronological order (newest first)
+        for i, item in enumerate(data):
+            evidence = item.get('evidence', {})
+            is_delete = item.get('isDelete', False)
+            ts_raw = item.get('timestamp', {})
+            tx_id = item.get('txId', 'N/A')
+            
+            # Format timestamp
+            if isinstance(ts_raw, dict):
+                seconds = ts_raw.get('seconds', 0)
+                dt = datetime.datetime.fromtimestamp(seconds)
+                formatted_time = dt.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                formatted_time = str(ts_raw)
+            
+            # Determine action
+            if is_delete:
+                action = "DELETED"
+            else:
+                created_at = evidence.get('created_at', '')
+                updated_at = evidence.get('updated_at', '')
+                
+                if created_at == updated_at:
+                    action = "CREATED"
+                else:
+                    # Check if owner changed compared to previous state (next item in list)
+                    current_owner = evidence.get('owner', '')
+                    prev_owner = None
+                    
+                    # Look at the next item (older record) to compare owner
+                    if i + 1 < len(data):
+                        prev_evidence = data[i + 1].get('evidence', {})
+                        prev_owner = prev_evidence.get('owner', '')
+                    
+                    if prev_owner is not None and current_owner != prev_owner:
+                        action = "TRANSFERRED"
+                    else:
+                        action = "UPDATED"
+            
+            # Print formatted block
+            print(f"\n  ┌{'─'*66}┐")
+            print(f"  │ {action:^64} │")
+            print(f"  ├{'─'*66}┤")
+            print(f"  │ {'Timestamp:':<12} {formatted_time:<52} │")
+            print(f"  │ {'TX ID:':<12} {tx_id[:52]:<52} │")
+            
+            if not is_delete:
+                desc = evidence.get('description', 'N/A')
+                if len(desc) > 50: desc = desc[:47] + "..."
+                owner = evidence.get('owner', 'N/A')
+                location = evidence.get('location', 'N/A')
+                if len(location) > 50: location = location[:47] + "..."
+                status = evidence.get('status', 'N/A')
+                tags = evidence.get('tags', [])
+                tags_str = ', '.join(tags) if tags else 'None'
+                if len(tags_str) > 50: tags_str = tags_str[:47] + "..."
+                
+                print(f"  ├{'─'*66}┤")
+                print(f"  │ {'Owner:':<12} {owner:<52} │")
+                print(f"  │ {'Description:':<12} {desc:<52} │")
+                print(f"  │ {'Location:':<12} {location:<52} │")
+                print(f"  │ {'Status:':<12} {status:<52} │")
+                print(f"  │ {'Tags:':<12} {tags_str:<52} │")
+            
+            print(f"  └{'─'*66}┘")
+            
+            # Draw arrow to next record (if not last)
+            if i < len(data) - 1:
+                print(f"{'':^35}▲")
+                print(f"{'':^35}│")
+        
+        print(f"\n{'='*70}")
+        print(f"  Total Records: {len(data)}")
+        print(f"{'='*70}")
 
     def get_all(self):
         data = self.query_chaincode("GetAllEvidence", [])
