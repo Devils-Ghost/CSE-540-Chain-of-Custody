@@ -108,7 +108,14 @@ func (c *ChainOfCustodyContract) CreateEvidence(ctx contractapi.TransactionConte
         return err
     }
 
-    return ctx.GetStub().PutState(id, evidenceJSON)
+    // Store the evidence
+    err = ctx.GetStub().PutState(id, evidenceJSON)
+    if err != nil {
+        return err
+    }
+
+    // Add to evidence index for tracking all IDs (including after deletion)
+    return c.addToEvidenceIndex(ctx, id)
 }
 
 // ReadEvidence retrieves an evidence item by id.
@@ -245,9 +252,19 @@ func (c *ChainOfCustodyContract) GetAllEvidence(ctx contractapi.TransactionConte
 			return nil, err
 		}
 
+		// Skip transfer records (keys starting with "TRANSFER_") and index key
+		if strings.HasPrefix(queryResponse.Key, "TRANSFER_") || queryResponse.Key == "EVIDENCE_INDEX" {
+			continue
+		}
+
 		var evidence Evidence
 		err = json.Unmarshal(queryResponse.Value, &evidence)
 		if err != nil {
+			continue
+		}
+
+		// Additional safety check: skip if ID is empty (not a valid evidence record)
+		if evidence.ID == "" {
 			continue
 		}
 
@@ -265,6 +282,58 @@ func (c *ChainOfCustodyContract) EvidenceExists(ctx contractapi.TransactionConte
 	}
 
 	return evidenceJSON != nil, nil
+}
+
+// addToEvidenceIndex adds an evidence ID to the master index
+func (c *ChainOfCustodyContract) addToEvidenceIndex(ctx contractapi.TransactionContextInterface, id string) error {
+	indexKey := "EVIDENCE_INDEX"
+	indexJSON, err := ctx.GetStub().GetState(indexKey)
+	
+	var index []string
+	if err != nil {
+		return err
+	}
+	if indexJSON != nil {
+		err = json.Unmarshal(indexJSON, &index)
+		if err != nil {
+			return err
+		}
+	}
+	
+	// Check if ID already exists in index
+	for _, existingID := range index {
+		if existingID == id {
+			return nil // Already in index
+		}
+	}
+	
+	index = append(index, id)
+	updatedJSON, err := json.Marshal(index)
+	if err != nil {
+		return err
+	}
+	
+	return ctx.GetStub().PutState(indexKey, updatedJSON)
+}
+
+// GetAllEvidenceIDs returns all evidence IDs ever created (including deleted ones)
+func (c *ChainOfCustodyContract) GetAllEvidenceIDs(ctx contractapi.TransactionContextInterface) ([]string, error) {
+	indexKey := "EVIDENCE_INDEX"
+	indexJSON, err := ctx.GetStub().GetState(indexKey)
+	if err != nil {
+		return nil, err
+	}
+	if indexJSON == nil {
+		return []string{}, nil
+	}
+	
+	var index []string
+	err = json.Unmarshal(indexJSON, &index)
+	if err != nil {
+		return nil, err
+	}
+	
+	return index, nil
 }
 
 // DeleteEvidence deletes an evidence item

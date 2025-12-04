@@ -361,38 +361,35 @@ class ChainOfCustodyClient:
             print("Deleted." if result["success"] else f"Failed: {result['error']}")
 
     def view_blockchain_ledger(self):
-        print(f"\n--- Entire Blockchain Ledger ({self.friendly_name}) ---")
-        print("Fetching all transactions... this might take a moment...")
+        print(f"\n{'='*70}")
+        print(f"  BLOCKCHAIN LEDGER ({self.friendly_name})")
+        print(f"{'='*70}")
+        print("  Fetching all transactions... this might take a moment...")
         
-        # 1. Get all evidence IDs
-        all_evidence = self.query_chaincode("GetAllEvidence", [])
-        if not all_evidence:
-            print("No evidence found on the ledger.")
+        # 1. Get all evidence IDs (including deleted ones)
+        all_evidence_ids = self.query_chaincode("GetAllEvidenceIDs", [])
+        if not all_evidence_ids:
+            print("  No evidence found on the ledger.")
             return
 
         all_txs = []
         
-        # 2. For each evidence, get its history
-        for item in all_evidence:
-            if isinstance(item, str):
-                try:
-                    item = json.loads(item)
-                except json.JSONDecodeError:
-                    continue
-            
-            if not isinstance(item, dict):
-                continue
-                
-            ev_id = item.get('id')
+        # 2. For each evidence ID, get its history
+        for ev_id in all_evidence_ids:
             if not ev_id: continue
             
             history = self.query_chaincode("GetEvidenceHistory", [ev_id])
             if history:
-                for record in history:
+                for idx, record in enumerate(history):
                     record['asset_id'] = ev_id
+                    # Store the previous record's owner for action detection
+                    if idx + 1 < len(history):
+                        record['prev_owner'] = history[idx + 1].get('evidence', {}).get('owner', '')
+                    else:
+                        record['prev_owner'] = None
                     all_txs.append(record)
         
-        # 3. Sort by timestamp
+        # 3. Sort by timestamp (oldest first for ledger view)
         def get_sort_key(tx):
             ts = tx.get('timestamp')
             if isinstance(ts, dict):
@@ -402,25 +399,27 @@ class ChainOfCustodyClient:
         all_txs.sort(key=get_sort_key)
 
         if not all_txs:
-            print("No transactions found.")
+            print("  No transactions found.")
             return
 
-        print(f"\nFound {len(all_txs)} transactions across {len(all_evidence)} assets.\n")
+        print(f"\n  Found {len(all_txs)} transactions across {len(all_evidence_ids)} assets.")
         
         # Fetch real genesis block info
         genesis_info = self.get_genesis_block()
         genesis_hash = genesis_info.get('hash', 'N/A')
         
-        # If genesis hash failed, use a placeholder so the chain doesn't look broken
+        # If genesis hash failed, use a placeholder
         if genesis_hash == 'N/A':
-            genesis_hash = "00000000000000000000000000000000000000000000000000000000"
+            genesis_hash = "0" * 56
 
-        print(" +----------------------------------------------------------------------+")
-        print(" | GENESIS BLOCK                                                        |")
-        print(f" | Timestamp : {genesis_info.get('timestamp', 'N/A').ljust(49)}|")
-        print(f" | Data Hash : {genesis_hash[:49].ljust(49)}|")
-        print(" | Prev Hash : 00000000000000000000000000000000000000000000000000000000 |")
-        print(" +----------------------------------------------------------------------+")
+        # Print Genesis Block
+        print(f"\n  ┌{'─'*66}┐")
+        print(f"  │ {'GENESIS BLOCK':^64} │")
+        print(f"  ├{'─'*66}┤")
+        print(f"  │ {'Timestamp:':<12} {genesis_info.get('timestamp', 'N/A'):<52} │")
+        print(f"  │ {'Data Hash:':<12} {genesis_hash[:52]:<52} │")
+        print(f"  │ {'Prev Hash:':<12} {'0'*52:<52} │")
+        print(f"  └{'─'*66}┘")
         
         prev_hash = genesis_hash
 
@@ -432,35 +431,66 @@ class ChainOfCustodyClient:
             if isinstance(ts_raw, dict):
                 seconds = ts_raw.get('seconds', 0)
                 dt = datetime.datetime.fromtimestamp(seconds)
-                ts = dt.strftime('%Y-%m-%d %H:%M:%S')
+                formatted_time = dt.strftime('%Y-%m-%d %H:%M:%S')
             else:
-                ts = str(ts_raw)
+                formatted_time = str(ts_raw)
 
             asset_id = tx.get('asset_id', 'N/A')
             is_delete = tx.get('isDelete', False)
-            evidence_data = tx.get('evidence', {})
+            evidence = tx.get('evidence', {})
+            prev_owner = tx.get('prev_owner')
             
-            print("     |")
-            print(f"     v   (Linked to: {prev_hash[:10]}...)")
-            print(" +----------------------------------------------------------------------+")
-            print(f" | TX ID     : {tx_id}")
-            print(f" | Prev Hash : {prev_hash}")
-            print(f" | Timestamp : {ts}")
-            print(f" | Asset ID  : {asset_id}")
-            
+            # Determine action
             if is_delete:
-                 print(f" | Status    : DELETED")
+                action = "DELETED"
             else:
-                owner = evidence_data.get('owner', 'N/A')
-                desc = evidence_data.get('description', 'N/A')
-                # Truncate description if too long
-                if desc and len(desc) > 40: desc = desc[:37] + "..."
-                print(f" | Owner     : {owner}")
-                print(f" | Desc      : {desc}")
-            print(" +----------------------------------------------------------------------+")
+                created_at = evidence.get('created_at', '')
+                updated_at = evidence.get('updated_at', '')
+                
+                if created_at == updated_at:
+                    action = "CREATED"
+                else:
+                    current_owner = evidence.get('owner', '')
+                    if prev_owner is not None and current_owner != prev_owner:
+                        action = "TRANSFERRED"
+                    else:
+                        action = "UPDATED"
+            
+            # Draw link arrow
+            print(f"{'':^35}│")
+            print(f"{'':^35}▼")
+            
+            # Print transaction block
+            print(f"\n  ┌{'─'*66}┐")
+            print(f"  │ {action:^64} │")
+            print(f"  ├{'─'*66}┤")
+            print(f"  │ {'Timestamp:':<12} {formatted_time:<52} │")
+            print(f"  │ {'TX ID:':<12} {tx_id[:52]:<52} │")
+            print(f"  │ {'Prev Hash:':<12} {prev_hash[:52]:<52} │")
+            print(f"  │ {'Evidence ID:':<12} {asset_id[:52]:<52} │")
+            
+            if not is_delete:
+                desc = evidence.get('description', 'N/A')
+                if len(desc) > 50: desc = desc[:47] + "..."
+                owner = evidence.get('owner', 'N/A')
+                location = evidence.get('location', 'N/A')
+                if len(location) > 50: location = location[:47] + "..."
+                status = evidence.get('status', 'N/A')
+                
+                print(f"  ├{'─'*66}┤")
+                print(f"  │ {'Owner:':<12} {owner:<52} │")
+                print(f"  │ {'Description:':<12} {desc:<52} │")
+                print(f"  │ {'Location:':<12} {location:<52} │")
+                print(f"  │ {'Status:':<12} {status:<52} │")
+            
+            print(f"  └{'─'*66}┘")
             
             # Update prev_hash for the next link
             prev_hash = tx_id
+        
+        print(f"\n{'='*70}")
+        print(f"  Total Transactions: {len(all_txs)}")
+        print(f"{'='*70}")
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
