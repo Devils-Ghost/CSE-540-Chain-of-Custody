@@ -273,14 +273,12 @@ class ChainOfCustodyClient:
         print(f"  EVIDENCE HISTORY: {ev_id}")
         print(f"{'='*70}")
         
-        # History is in reverse chronological order (newest first)
         for i, item in enumerate(data):
             evidence = item.get('evidence', {})
             is_delete = item.get('isDelete', False)
             ts_raw = item.get('timestamp', {})
             tx_id = item.get('txId', 'N/A')
             
-            # Format timestamp
             if isinstance(ts_raw, dict):
                 seconds = ts_raw.get('seconds', 0)
                 dt = datetime.datetime.fromtimestamp(seconds)
@@ -288,7 +286,6 @@ class ChainOfCustodyClient:
             else:
                 formatted_time = str(ts_raw)
             
-            # Determine action
             if is_delete:
                 action = "DELETED"
             else:
@@ -298,11 +295,9 @@ class ChainOfCustodyClient:
                 if created_at == updated_at:
                     action = "CREATED"
                 else:
-                    # Check if owner changed compared to previous state (next item in list)
                     current_owner = evidence.get('owner', '')
                     prev_owner = None
                     
-                    # Look at the next item (older record) to compare owner
                     if i + 1 < len(data):
                         prev_evidence = data[i + 1].get('evidence', {})
                         prev_owner = prev_evidence.get('owner', '')
@@ -312,7 +307,6 @@ class ChainOfCustodyClient:
                     else:
                         action = "UPDATED"
             
-            # Print formatted block
             print(f"\n  ┌{'─'*66}┐")
             print(f"  │ {action:^64} │")
             print(f"  ├{'─'*66}┤")
@@ -339,7 +333,6 @@ class ChainOfCustodyClient:
             
             print(f"  └{'─'*66}┘")
             
-            # Draw arrow to next record (if not last)
             if i < len(data) - 1:
                 print(f"{'':^35}▲")
                 print(f"{'':^35}│")
@@ -366,7 +359,6 @@ class ChainOfCustodyClient:
         print(f"{'='*70}")
         print("  Fetching all transactions... this might take a moment...")
         
-        # 1. Get all evidence IDs (including deleted ones)
         all_evidence_ids = self.query_chaincode("GetAllEvidenceIDs", [])
         if not all_evidence_ids:
             print("  No evidence found on the ledger.")
@@ -374,7 +366,6 @@ class ChainOfCustodyClient:
 
         all_txs = []
         
-        # 2. For each evidence ID, get its history
         for ev_id in all_evidence_ids:
             if not ev_id: continue
             
@@ -382,14 +373,12 @@ class ChainOfCustodyClient:
             if history:
                 for idx, record in enumerate(history):
                     record['asset_id'] = ev_id
-                    # Store the previous record's owner for action detection
                     if idx + 1 < len(history):
                         record['prev_owner'] = history[idx + 1].get('evidence', {}).get('owner', '')
                     else:
                         record['prev_owner'] = None
                     all_txs.append(record)
         
-        # 3. Sort by timestamp (oldest first for ledger view)
         def get_sort_key(tx):
             ts = tx.get('timestamp')
             if isinstance(ts, dict):
@@ -404,15 +393,12 @@ class ChainOfCustodyClient:
 
         print(f"\n  Found {len(all_txs)} transactions across {len(all_evidence_ids)} assets.")
         
-        # Fetch real genesis block info
         genesis_info = self.get_genesis_block()
         genesis_hash = genesis_info.get('hash', 'N/A')
         
-        # If genesis hash failed, use a placeholder
         if genesis_hash == 'N/A':
             genesis_hash = "0" * 56
 
-        # Print Genesis Block
         print(f"\n  ┌{'─'*66}┐")
         print(f"  │ {'GENESIS BLOCK':^64} │")
         print(f"  ├{'─'*66}┤")
@@ -427,7 +413,6 @@ class ChainOfCustodyClient:
             tx_id = tx.get('txId', 'N/A')
             ts_raw = tx.get('timestamp', 'N/A')
             
-            # Format timestamp
             if isinstance(ts_raw, dict):
                 seconds = ts_raw.get('seconds', 0)
                 dt = datetime.datetime.fromtimestamp(seconds)
@@ -440,7 +425,6 @@ class ChainOfCustodyClient:
             evidence = tx.get('evidence', {})
             prev_owner = tx.get('prev_owner')
             
-            # Determine action
             if is_delete:
                 action = "DELETED"
             else:
@@ -456,11 +440,9 @@ class ChainOfCustodyClient:
                     else:
                         action = "UPDATED"
             
-            # Draw link arrow
             print(f"{'':^35}│")
             print(f"{'':^35}▼")
             
-            # Print transaction block
             print(f"\n  ┌{'─'*66}┐")
             print(f"  │ {action:^64} │")
             print(f"  ├{'─'*66}┤")
@@ -485,7 +467,6 @@ class ChainOfCustodyClient:
             
             print(f"  └{'─'*66}┘")
             
-            # Update prev_hash for the next link
             prev_hash = tx_id
         
         print(f"\n{'='*70}")

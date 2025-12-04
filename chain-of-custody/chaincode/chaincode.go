@@ -9,25 +9,21 @@ import (
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
-// ChainOfCustodyContract provides functions for managing chain of custody
 type ChainOfCustodyContract struct {
 	contractapi.Contract
 }
 
-// Evidence represents an item in the chain of custody
-// this is an important structure stored on the ledger (value by key).
 type Evidence struct {
-	ID          string   `json:"id"`	// primary key, uuid
+	ID          string   `json:"id"`	
 	Description string   `json:"description"`
 	Owner       string   `json:"owner"`
 	Location    string   `json:"location"`
-	Status      string   `json:"status"`	// e.g-> Collected/Archived/etc.
+	Status      string   `json:"status"`	
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`
 	Tags        []string `json:"tags"`
 }
 
-// CustodyTransfer represents a custody transfer event
 type CustodyTransfer struct {
 	EvidenceID   string `json:"evidence_id"`
 	FromOwner    string `json:"from_owner"`
@@ -38,7 +34,6 @@ type CustodyTransfer struct {
 }
 
 
-// InitLedger initializes the ledger with sample data
 func (c *ChainOfCustodyContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
 	evidences := []Evidence{
 		{
@@ -84,10 +79,7 @@ func (c *ChainOfCustodyContract) validateNewEvidenceID(ctx contractapi.Transacti
     return nil
 }
 
-// CreateEvidence creates a new evidence item
-// id is unique, owner is required.
 func (c *ChainOfCustodyContract) CreateEvidence(ctx contractapi.TransactionContextInterface, id string, description string, owner string, location string, tags []string) error {
-    // Validate id before proceeding
     if err := c.validateNewEvidenceID(ctx, id); err != nil {
         return err
     }
@@ -108,17 +100,14 @@ func (c *ChainOfCustodyContract) CreateEvidence(ctx contractapi.TransactionConte
         return err
     }
 
-    // Store the evidence
     err = ctx.GetStub().PutState(id, evidenceJSON)
     if err != nil {
         return err
     }
 
-    // Add to evidence index for tracking all IDs (including after deletion)
     return c.addToEvidenceIndex(ctx, id)
 }
 
-// ReadEvidence retrieves an evidence item by id.
 func (c *ChainOfCustodyContract) ReadEvidence(ctx contractapi.TransactionContextInterface, id string) (*Evidence, error) {
 	evidenceJSON, err := ctx.GetStub().GetState(id)
 	if err != nil {
@@ -137,7 +126,6 @@ func (c *ChainOfCustodyContract) ReadEvidence(ctx contractapi.TransactionContext
 	return &evidence, nil
 }
 
-// UpdateEvidence updates an existing evidence item
 func (c *ChainOfCustodyContract) UpdateEvidence(ctx contractapi.TransactionContextInterface, id string, description string, location string, status string) error {
 	evidence, err := c.ReadEvidence(ctx, id)
 	if err != nil {
@@ -157,15 +145,12 @@ func (c *ChainOfCustodyContract) UpdateEvidence(ctx contractapi.TransactionConte
 	return ctx.GetStub().PutState(id, evidenceJSON)
 }
 
-// TransferCustody transfers custody to a new owner.
-// must verify current ownership and record transfer trail.
 func (c *ChainOfCustodyContract) TransferCustody(ctx contractapi.TransactionContextInterface, id string, newOwner string, reason string, transferredBy string) error {
 	evidence, err := c.ReadEvidence(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	// Create custody transfer record
 	transfer := CustodyTransfer{
 		EvidenceID:   id,
 		FromOwner:    evidence.Owner,
@@ -180,14 +165,12 @@ func (c *ChainOfCustodyContract) TransferCustody(ctx contractapi.TransactionCont
 		return err
 	}
 
-	// Store transfer record with composite key
 	transferKey := fmt.Sprintf("TRANSFER_%s_%s", id, transfer.Timestamp)
 	err = ctx.GetStub().PutState(transferKey, transferJSON)
 	if err != nil {
 		return err
 	}
 
-	// Update evidence owner
 	evidence.Owner = newOwner
 	evidence.UpdatedAt = time.Now().Format(time.RFC3339)
 
@@ -199,7 +182,6 @@ func (c *ChainOfCustodyContract) TransferCustody(ctx contractapi.TransactionCont
 	return ctx.GetStub().PutState(id, evidenceJSON)
 }
 
-// GetEvidenceHistory retrieves the on-ledger history for an evidence id.
 func (c *ChainOfCustodyContract) GetEvidenceHistory(ctx contractapi.TransactionContextInterface, id string) ([]map[string]interface{}, error) {
 	resultsIterator, err := ctx.GetStub().GetHistoryForKey(id)
 	if err != nil {
@@ -236,7 +218,6 @@ func (c *ChainOfCustodyContract) GetEvidenceHistory(ctx contractapi.TransactionC
 	return history, nil
 }
 
-// GetAllEvidence retrieves all evidence items
 func (c *ChainOfCustodyContract) GetAllEvidence(ctx contractapi.TransactionContextInterface) ([]*Evidence, error) {
 	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
 	if err != nil {
@@ -252,7 +233,6 @@ func (c *ChainOfCustodyContract) GetAllEvidence(ctx contractapi.TransactionConte
 			return nil, err
 		}
 
-		// Skip transfer records (keys starting with "TRANSFER_") and index key
 		if strings.HasPrefix(queryResponse.Key, "TRANSFER_") || queryResponse.Key == "EVIDENCE_INDEX" {
 			continue
 		}
@@ -263,7 +243,6 @@ func (c *ChainOfCustodyContract) GetAllEvidence(ctx contractapi.TransactionConte
 			continue
 		}
 
-		// Additional safety check: skip if ID is empty (not a valid evidence record)
 		if evidence.ID == "" {
 			continue
 		}
@@ -274,7 +253,6 @@ func (c *ChainOfCustodyContract) GetAllEvidence(ctx contractapi.TransactionConte
 	return evidences, nil
 }
 
-// EvidenceExists checks if a given evidence id exists.
 func (c *ChainOfCustodyContract) EvidenceExists(ctx contractapi.TransactionContextInterface, id string) (bool, error) {
 	evidenceJSON, err := ctx.GetStub().GetState(id)
 	if err != nil {
@@ -284,7 +262,6 @@ func (c *ChainOfCustodyContract) EvidenceExists(ctx contractapi.TransactionConte
 	return evidenceJSON != nil, nil
 }
 
-// addToEvidenceIndex adds an evidence ID to the master index
 func (c *ChainOfCustodyContract) addToEvidenceIndex(ctx contractapi.TransactionContextInterface, id string) error {
 	indexKey := "EVIDENCE_INDEX"
 	indexJSON, err := ctx.GetStub().GetState(indexKey)
@@ -300,10 +277,9 @@ func (c *ChainOfCustodyContract) addToEvidenceIndex(ctx contractapi.TransactionC
 		}
 	}
 	
-	// Check if ID already exists in index
 	for _, existingID := range index {
 		if existingID == id {
-			return nil // Already in index
+			return nil 
 		}
 	}
 	
@@ -316,7 +292,6 @@ func (c *ChainOfCustodyContract) addToEvidenceIndex(ctx contractapi.TransactionC
 	return ctx.GetStub().PutState(indexKey, updatedJSON)
 }
 
-// GetAllEvidenceIDs returns all evidence IDs ever created (including deleted ones)
 func (c *ChainOfCustodyContract) GetAllEvidenceIDs(ctx contractapi.TransactionContextInterface) ([]string, error) {
 	indexKey := "EVIDENCE_INDEX"
 	indexJSON, err := ctx.GetStub().GetState(indexKey)
@@ -336,7 +311,6 @@ func (c *ChainOfCustodyContract) GetAllEvidenceIDs(ctx contractapi.TransactionCo
 	return index, nil
 }
 
-// DeleteEvidence deletes an evidence item
 func (c *ChainOfCustodyContract) DeleteEvidence(ctx contractapi.TransactionContextInterface, id string) error {
 	exists, err := c.EvidenceExists(ctx, id)
 	if err != nil {
@@ -349,7 +323,6 @@ func (c *ChainOfCustodyContract) DeleteEvidence(ctx contractapi.TransactionConte
 	return ctx.GetStub().DelState(id)
 }
 
-// main starts the chaincode process.
 func main() {
 	chaincode, err := contractapi.NewChaincode(&ChainOfCustodyContract{})
 	if err != nil {
