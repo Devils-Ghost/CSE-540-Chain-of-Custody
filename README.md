@@ -223,13 +223,13 @@ docker run --rm hello-world 2>&1 | grep "Hello from Docker" && echo "Success Doc
 ---
 
 ## Project start:
-- Copy chain-of-custody to fabric-samples/chaincode
-  ```bash
+Copy chain-of-custody to fabric-samples/chaincode
+```bash
   cd ~/blockchain-projects/fabric-samples/test-network
-  ```
-  ```bash 
+```
+```bash 
   ./network.sh up createChannel -c mychannel -ca
-  ```
+```
 ```bash
   ./network.sh deployCC \
   -ccn chainofcustody \
